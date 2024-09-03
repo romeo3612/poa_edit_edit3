@@ -50,38 +50,110 @@ class KoreaInvestment:
             "AMEX": QueryExchangeCode.AMEX,
         }
 
-    def check_position(self, exchange: Literal["KRX", "NASDAQ", "NYSE", "AMEX"]):
-        """
-        KIS Number 3의 현물 잔고를 확인하는 메서드.
-        잔고가 있을 경우 해당 정보를 반환합니다.
-        """
-        # 현물 잔고 조회 API 엔드포인트
-        endpoint = Endpoints.korea_order_buyable.value if exchange == "KRX" else Endpoints.usa_order_buyable.value
-        headers = copy.deepcopy(self.base_headers)
-        
-        # API 요청에 필요한 파라미터 설정
-        params = {"CANO": self.account_number, "ACNT_PRDT_CD": self.base_order_body.ACNT_PRDT_CD}
-        
-        response = self.get(endpoint, params=params, headers=headers)
-        
-        # 현물 잔고가 있으면 반환, 없으면 None 반환
-        holdings = response.get("output", [])
-        return holdings if holdings else None
+    def init_info(self, order_info: MarketOrder):
+        self.order_info = order_info
 
-    def close_position(self, exchange: Literal["KRX", "NASDAQ", "NYSE", "AMEX"], holdings: list):
-        """
-        보유 현물을 시장가로 매도하는 메서드.
-        """
-        for holding in holdings:
-            ticker = holding["pdno"]  # 종목 코드
-            quantity = float(holding["hldg_qty"])  # 보유 수량
-            
-            if quantity > 0:
-                print(f"{quantity}개의 {ticker} 현물을 시장가로 매도합니다.")
-                # 시장가 매도 명령 실행
-                self.create_order(exchange, ticker, "market", "sell", int(quantity))
+    def close_session(self):
+        self.session.close()
+
+    def get(self, endpoint: str, params: dict = None, headers: dict = None):
+        url = f"{self.base_url}{endpoint}"
+        # headers |= self.base_headers
+        return self.session.get(url, params=params, headers=headers).json()
+
+    def post_with_error_handling(
+        self, endpoint: str, data: dict = None, headers: dict = None
+    ):
+        url = f"{self.base_url}{endpoint}"
+        response = self.session.post(url, json=data, headers=headers).json()
+        if "access_token" in response.keys() or response["rt_cd"] == "0":
+            return response
+        else:
+            raise Exception(response)
+
+    def post(self, endpoint: str, data: dict = None, headers: dict = None):
+        return self.post_with_error_handling(endpoint, data, headers)
+
+    def get_hashkey(self, data) -> str:
+        headers = {"appKey": self.key, "appSecret": self.secret}
+        endpoint = "/uapi/hashkey"
+        url = f"{self.base_url}{endpoint}"
+        return self.session.post(url, json=data, headers=headers).json()["HASH"]
+
+    def open_auth(self):
+        return self.open_json("auth.json")
+
+    def write_auth(self, auth):
+        self.write_json("auth.json", auth)
+
+    def check_auth(self, auth, key, secret, kis_number):
+        if auth is None:
+            return False
+        access_token, access_token_token_expired = auth
+        try:
+            if access_token == "nothing":
+                return False
             else:
-                print(f"{ticker} 현물이 없습니다.")
+                if not self.is_auth:
+                    response = self.session.get(
+                        "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-ccnl",
+                        headers={
+                            "authorization": f"BEARER {access_token}",
+                            "appkey": key,
+                            "appsecret": secret,
+                            "custtype": "P",
+                            "tr_id": "FHKST01010300",
+                        },
+                        params={
+                            "FID_COND_MRKT_DIV_CODE": "J",
+                            "FID_INPUT_ISCD": "005930",
+                        },
+                    ).json()
+                    if response["msg_cd"] == "EGW00123":
+                        return False
+
+            access_token_token_expired = datetime.strptime(
+                access_token_token_expired, "%Y-%m-%d %H:%M:%S"
+            )
+            diff = access_token_token_expired - datetime.now()
+            total_seconds = diff.total_seconds()
+            if total_seconds < 60 * 60:
+                return False
+            else:
+                return True
+
+        except Exception as e:
+            print(traceback.format_exc())
+
+    def create_auth(self, key: str, secret: str):
+        data = {"grant_type": "client_credentials", "appkey": key, "appsecret": secret}
+        base_url = BaseUrls.base_url.value
+        endpoint = "/oauth2/tokenP"
+
+        url = f"{base_url}{endpoint}"
+
+        response = self.session.post(url, json=data).json()
+        if "access_token" in response.keys() or response.get("rt_cd") == "0":
+            return response["access_token"], response["access_token_token_expired"]
+        else:
+            raise Exception(response)
+
+    def auth(self):
+        auth_id = f"KIS{self.kis_number}"
+        auth = db.get_auth(auth_id)
+        if not self.check_auth(auth, self.key, self.secret, self.kis_number):
+            auth = self.create_auth(self.key, self.secret)
+            db.set_auth(auth_id, auth[0], auth[1])
+        else:
+            self.is_auth = True
+        access_token = auth[0]
+        self.base_headers = BaseHeaders(
+            authorization=f"Bearer {access_token}",
+            appkey=self.key,
+            appsecret=self.secret,
+            custtype="P",
+        ).dict()
+        return auth
 
     @validate_arguments
     def create_order(
@@ -94,19 +166,6 @@ class KoreaInvestment:
         price: int = 0,
         mintick=0.01,
     ):
-        """
-        주문 생성 메서드 수정:
-        KIS Number 1인 경우 보유 현물을 먼저 정리하고 매수 명령을 실행합니다.
-        """
-        # KIS Number 3의 새로운 매수 명령이 들어온 경우
-        if self.kis_number == 1 and side == "buy":
-            # 현재 보유 현물 잔고 확인
-            holdings = self.check_position(exchange)
-            if holdings:
-                # 보유 현물이 있을 경우 시장가로 매도
-                self.close_position(exchange, holdings)
-                print("현물 매도 완료, 새로운 매수 명령 실행 중...")
-                
         endpoint = (
             Endpoints.korea_order.value
             if exchange == "KRX"
