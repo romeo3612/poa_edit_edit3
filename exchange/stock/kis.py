@@ -194,20 +194,20 @@ class KoreaInvestment:
             qty = stock["hldg_qty"]
             self.create_order(exchange="KRX", ticker=ticker, order_type="market", side="sell", amount=qty)
 
-    def wait_until_stocks_sold(self, account_number: str, account_code: str, max_wait_time=30):
-        """모든 주식이 매도될 때까지 대기하는 함수"""
+    def wait_until_stocks_sold(self, account_number: str, account_code: str, max_wait_time=60):
+        """모든 주식이 매도될 때까지 대기하는 함수 (매도 체결 확인)"""
         start_time = time.time()
         while time.time() - start_time < max_wait_time:
             stock_info = self.account_has_stocks(account_number, account_code)
             if not stock_info:
                 print("모든 주식이 매도되었습니다.")
                 return True
-            print("주식 매도 대기 중...")
+            print("주식 매도 체결 대기 중...")
             time.sleep(2)  # 2초 대기 후 다시 확인
         raise TimeoutError("주식이 매도되지 않았습니다. 최대 대기 시간을 초과했습니다.")
 
     def handle_market_buy_order(self, ticker: str, amount: int):
-        """KIS1 계좌에 매수 주문 전에 주식 전량 매도 후 매수 주문 처리"""
+        """KIS1 계좌에 매수 주문 전에 주식 전량 매도 후 매도 체결을 확인한 다음 매수 주문 처리"""
         if self.kis_number == 1:
             stock_info = self.account_has_stocks(self.account_number, self.base_order_body.ACNT_PRDT_CD)
             if stock_info:
@@ -215,7 +215,7 @@ class KoreaInvestment:
                 self.sell_all_stocks(stock_info)
                 print("매도 완료 대기 중...")
                 self.wait_until_stocks_sold(self.account_number, self.base_order_body.ACNT_PRDT_CD)
-        # 모든 주식이 매도된 후에만 매수 주문 실행
+        # 모든 주식이 매도되고 나면 매수 주문 실행
         self.create_korea_market_buy_order(ticker, amount)
 
     @validate_arguments
