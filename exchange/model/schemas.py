@@ -90,76 +90,40 @@ class Settings(BaseSettings):
     WHITELIST: list[str] | None = None
     PORT: int | None = None
     DISCORD_WEBHOOK_URL: str | None = None
-    
-    # 기존 KIS 계좌 설정 + ACCOUNT_MODE 추가
+    UPBIT_KEY: str | None = None
+    UPBIT_SECRET: str | None = None
+    BINANCE_KEY: str | None = None
+    BINANCE_SECRET: str | None = None
+    BYBIT_KEY: str | None = None
+    BYBIT_SECRET: str | None = None
+    BITGET_KEY: str | None = None
+    BITGET_SECRET: str | None = None
+    BITGET_PASSPHRASE: str | None = None
+    OKX_KEY: str | None = None
+    OKX_SECRET: str | None = None
+    OKX_PASSPHRASE: str | None = None
     KIS1_ACCOUNT_NUMBER: str | None = None
     KIS1_ACCOUNT_CODE: str | None = None
     KIS1_KEY: str | None = None
     KIS1_SECRET: str | None = None
-    KIS1_ACCOUNT_MODE: str | None = None  # 계좌 1의 ACCOUNT_MODE 추가
-
     KIS2_ACCOUNT_NUMBER: str | None = None
     KIS2_ACCOUNT_CODE: str | None = None
     KIS2_KEY: str | None = None
     KIS2_SECRET: str | None = None
-    KIS2_ACCOUNT_MODE: str | None = None  # 계좌 2의 ACCOUNT_MODE 추가
-
     KIS3_ACCOUNT_NUMBER: str | None = None
     KIS3_ACCOUNT_CODE: str | None = None
     KIS3_KEY: str | None = None
     KIS3_SECRET: str | None = None
-    KIS3_ACCOUNT_MODE: str | None = None  # 계좌 3의 ACCOUNT_MODE 추가
-
     KIS4_ACCOUNT_NUMBER: str | None = None
     KIS4_ACCOUNT_CODE: str | None = None
     KIS4_KEY: str | None = None
     KIS4_SECRET: str | None = None
-    KIS4_ACCOUNT_MODE: str | None = None  # 계좌 4의 ACCOUNT_MODE 추가
-
-    KIS5_ACCOUNT_NUMBER: str | None = None
-    KIS5_ACCOUNT_CODE: str | None = None
-    KIS5_KEY: str | None = None
-    KIS5_SECRET: str | None = None
-    KIS5_ACCOUNT_MODE: str | None = None  # 계좌 5의 ACCOUNT_MODE 추가
-
-    KIS6_ACCOUNT_NUMBER: str | None = None
-    KIS6_ACCOUNT_CODE: str | None = None
-    KIS6_KEY: str | None = None
-    KIS6_SECRET: str | None = None
-    KIS6_ACCOUNT_MODE: str | None = None  # 계좌 6의 ACCOUNT_MODE 추가
-
-    KIS7_ACCOUNT_NUMBER: str | None = None
-    KIS7_ACCOUNT_CODE: str | None = None
-    KIS7_KEY: str | None = None
-    KIS7_SECRET: str | None = None
-    KIS7_ACCOUNT_MODE: str | None = None  # 계좌 7의 ACCOUNT_MODE 추가
-
-    KIS8_ACCOUNT_NUMBER: str | None = None
-    KIS8_ACCOUNT_CODE: str | None = None
-    KIS8_KEY: str | None = None
-    KIS8_SECRET: str | None = None
-    KIS8_ACCOUNT_MODE: str | None = None  # 계좌 8의 ACCOUNT_MODE 추가
-
-    KIS9_ACCOUNT_NUMBER: str | None = None
-    KIS9_ACCOUNT_CODE: str | None = None
-    KIS9_KEY: str | None = None
-    KIS9_SECRET: str | None = None
-    KIS9_ACCOUNT_MODE: str | None = None  # 계좌 9의 ACCOUNT_MODE 추가
-
-    KIS10_ACCOUNT_NUMBER: str | None = None
-    KIS10_ACCOUNT_CODE: str | None = None
-    KIS10_KEY: str | None = None
-    KIS10_SECRET: str | None = None
-    KIS10_ACCOUNT_MODE: str | None = None  # 계좌 10의 ACCOUNT_MODE 추가
-
     DB_ID: str = "poa@admin.com"
     DB_PASSWORD: str = "poabot!@#$"
 
     class Config:
         env_file = env_path  # ".env"
         env_file_encoding = "utf-8"
-
-
 
 
 def get_extra_order_info(order_info):

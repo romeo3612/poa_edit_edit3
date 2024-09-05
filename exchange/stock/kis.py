@@ -1,12 +1,15 @@
-import os
 from datetime import datetime
 import json
 import httpx
+from exchange.stock.error import TokenExpired
 from exchange.stock.schemas import *
 from exchange.database import db
 from pydantic import validate_arguments
 import traceback
 import copy
+from exchange.model import MarketOrder
+from devtools import debug
+
 
 class KoreaInvestment:
     def __init__(
@@ -20,11 +23,10 @@ class KoreaInvestment:
         self.key = key
         self.secret = secret
         self.kis_number = kis_number
-        # kis_number가 10일 때 연습 계좌로 설정 (기존 KIS 4번을 10번으로 옮김)
         self.base_url = (
-            BaseUrls.paper_base_url.value  # 연습 계좌 URL
-            if kis_number == 10
-            else BaseUrls.base_url.value   # 실제 계좌 URL
+            BaseUrls.base_url.value
+            if kis_number != 4
+            else BaseUrls.paper_base_url.value
         )
         self.is_auth = False
         self.account_number = account_number
@@ -47,9 +49,6 @@ class KoreaInvestment:
             "NYSE": QueryExchangeCode.NYSE,
             "AMEX": QueryExchangeCode.AMEX,
         }
-
-    # 나머지 메서드는 동일하게 유지
-
 
     def init_info(self, order_info: MarketOrder):
         self.order_info = order_info
@@ -155,35 +154,55 @@ class KoreaInvestment:
         ).dict()
         return auth
 
-    def account_has_stocks(self, account_number: str, account_code: str) -> bool:
-        """계좌에 주식이 존재하는지 확인하는 함수"""
-        account_mode = os.getenv(f"{self.kis_prefix}_ACCOUNT_MODE")
-        if account_mode == "01":
-            # 계좌 조회 API 호출
-            endpoint = "/uapi/domestic-stock/v1/trading/inquire-balance"
-            params = {
-                "CANO": account_number,
-                "ACNT_PRDT_CD": account_code,
-                "CTX_AREA_FK100": "",
-                "CTX_AREA_NK100": "",
-            }
-            headers = self.base_headers.copy()
-            headers.update({
-                "tr_id": "VTTC8434R",  # 계좌 잔고 조회용 트랜잭션 ID
-            })
-            response = self.get(endpoint, params, headers)
-            if response["output"]:
-                return response["output"]  # 주식 정보 반환
-            else:
-                return None
-        return False
+    def account_has_stocks(self, account_number: str, account_code: str) -> list:
+        """KIS1 계좌에 주식이 존재하는지 확인하는 함수"""
+        endpoint = "/uapi/domestic-stock/v1/trading/inquire-balance"
+        url = f"{self.base_url}{endpoint}"
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token}",  # 발급받은 OAuth 토큰
+            "appkey": self.key,
+            "appsecret": self.secret,
+            "tr_id": "VTTC8434R" if self.kis_number == 4 else "TTTC8434R",  # 모의 or 실전 구분
+        }
+        params = {
+            "CANO": account_number,  # 종합계좌번호
+            "ACNT_PRDT_CD": account_code,  # 계좌상품코드
+            "AFHR_FLPR_YN": "N",  # 시간외단일가여부
+            "OFL_YN": "",  # 오프라인 여부
+            "INQR_DVSN": "02",  # 조회구분 (종목별 조회)
+            "UNPR_DVSN": "01",  # 단가 구분
+            "FUND_STTL_ICLD_YN": "N",  # 펀드결제분 포함 여부
+            "FNCG_AMT_AUTO_RDPT_YN": "N",  # 융자금액자동상환여부
+            "PRCS_DVSN": "00",  # 전일매매 포함
+            "CTX_AREA_FK100": "",  # 연속 조회 (초기 조회 시 공백)
+            "CTX_AREA_NK100": ""  # 연속 조회 (초기 조회 시 공백)
+        }
 
-    def sell_all_stocks(self, stock_info):
-        """전량 매도하는 함수"""
+        response = self.session.get(url, headers=headers, params=params).json()
+
+        if response["rt_cd"] == "0":
+            return response["output1"]  # 주식 정보 반환
+        else:
+            raise Exception(f"Error: {response['msg1']}")
+
+    def sell_all_stocks(self, stock_info: list):
+        """KIS1 계좌에 보유 중인 주식을 모두 매도하는 함수"""
         for stock in stock_info:
             ticker = stock["pdno"]
             qty = stock["hldg_qty"]
             self.create_order(exchange="KRX", ticker=ticker, order_type="market", side="sell", amount=qty)
+
+    def handle_market_buy_order(self, ticker: str, amount: int):
+        """KIS1 계좌에 매수 주문 전에 주식 전량 매도 후 매수 주문 처리"""
+        if self.kis_number == 1:
+            stock_info = self.account_has_stocks(self.account_number, self.base_order_body.ACNT_PRDT_CD)
+            if stock_info:
+                print("KIS1 계좌에 주식이 존재합니다. 전량 매도 중...")
+                self.sell_all_stocks(stock_info)
+                print("매도 완료. 새로운 매수 주문을 실행합니다.")
+        # 매수 주문 실행
+        self.create_korea_market_buy_order(ticker, amount)
 
     @validate_arguments
     def create_order(
@@ -194,25 +213,8 @@ class KoreaInvestment:
         side: Literal["buy", "sell"],
         amount: int,
         price: int = 0,
-        kis_prefix: str = "KIS1",  # 기본 값으로 KIS1 사용
         mintick=0.01,
     ):
-        """새로운 매수/매도 주문을 처리하는 함수"""
-        self.kis_prefix = kis_prefix  # 현재 계좌에 대한 prefix 설정
-
-        account_mode = os.getenv(f"{self.kis_prefix}_ACCOUNT_MODE")
-        account_number = os.getenv(f"{self.kis_prefix}_ACCOUNT_NUMBER")
-        account_code = os.getenv(f"{self.kis_prefix}_ACCOUNT_CODE")
-
-        # 계좌 모드가 "01"이면 기존 주식을 매도 후 매수 주문을 진행
-        if account_mode == "01" and side == "buy":
-            stock_info = self.account_has_stocks(account_number, account_code)
-            if stock_info:
-                # 주식이 있다면 전량 매도
-                self.sell_all_stocks(stock_info)
-                print(f"{self.kis_prefix} 계좌의 기존 주식을 매도하고 새로운 매수 주문을 실행합니다.")
-
-        # 기존 주문 생성 로직
         endpoint = (
             Endpoints.korea_order.value
             if exchange == "KRX"
@@ -357,6 +359,7 @@ class KoreaInvestment:
     def write_json(self, path, data):
         with open(path, "w") as f:
             json.dump(data, f)
+
 
 if __name__ == "__main__":
     pass
