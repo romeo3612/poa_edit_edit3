@@ -51,6 +51,8 @@ class KoreaInvestment:
             "AMEX": QueryExchangeCode.AMEX,
         }
 
+        self.last_order_time = None  # 마지막 매수 주문 시간을 저장할 변수
+
     def init_info(self, order_info: MarketOrder):
         self.order_info = order_info
 
@@ -213,10 +215,29 @@ class KoreaInvestment:
             if stock_info:
                 print("KIS1 계좌에 주식이 존재합니다. 전량 매도 중...")
                 self.sell_all_stocks(stock_info)
-                print("매도 완료 대기 중...")
-                self.wait_until_stocks_sold(self.account_number, self.base_order_body.ACNT_PRDT_CD)
-        # 모든 주식이 매도된 후에만 매수 주문 실행
+                try:
+                    print("매도 완료 대기 중...")
+                    self.wait_until_stocks_sold(self.account_number, self.base_order_body.ACNT_PRDT_CD)
+                except TimeoutError:
+                    print("매도 시간이 초과되었습니다. 하지만 프로그램을 멈추지 않고 계속 진행합니다.")
+                    # 주식이 남아 있는지 확인 후 경고 메시지를 출력
+                    remaining_stock_info = self.account_has_stocks(self.account_number, self.base_order_body.ACNT_PRDT_CD)
+                    if remaining_stock_info:
+                        print(f"경고: 일부 주식이 아직 매도되지 않았습니다: {remaining_stock_info}")
+                    else:
+                        print("주식이 매도되지 않았지만, 계속 진행합니다.")
+                    # 프로그램을 멈추지 않고 계속 진행
+
+        current_time = time.time()
+        
+        if self.last_order_time and (current_time - self.last_order_time < 10):
+            time_left = 10 - (current_time - self.last_order_time)
+            print(f"연속된 매수 주문입니다. {time_left:.2f}초 대기 중...")
+            time.sleep(time_left)
+
+        # 매수 주문 처리
         self.create_korea_market_buy_order(ticker, amount)
+        self.last_order_time = time.time()  # 주문 시간 기록
 
     @validate_arguments
     def create_order(
