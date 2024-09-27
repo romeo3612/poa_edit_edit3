@@ -255,7 +255,7 @@ class KoreaInvestment:
     ):
         if exchange == "KRX":
             return self.create_order(exchange, ticker, "market", "buy", amount)
-        elif exchange in ("NASDAQ", "NYSE", "AMEX"):
+        elif exchange == "usa":
             return self.create_order(exchange, ticker, "market", "buy", amount, price)
 
     def create_market_sell_order(
@@ -267,7 +267,7 @@ class KoreaInvestment:
     ):
         if exchange == "KRX":
             return self.create_order(exchange, ticker, "market", "sell", amount)
-        elif exchange in ("NASDAQ", "NYSE", "AMEX"):
+        elif exchange == "usa":
             return self.create_order(exchange, ticker, "market", "sell", amount, price)
 
     def create_korea_market_buy_order(self, ticker: str, amount: int):
@@ -277,7 +277,7 @@ class KoreaInvestment:
         return self.create_market_sell_order("KRX", ticker, amount)
 
     def create_usa_market_buy_order(self, ticker: str, amount: int, price: int):
-        return self.create_market_buy_order("NASDAQ", ticker, amount, price)  # 예시로 NASDAQ 사용
+        return self.create_market_buy_order("usa", ticker, amount, price)  # 예시로 NASDAQ 사용
 
     def fetch_ticker(
         self, exchange: Literal["KRX", "NASDAQ", "NYSE", "AMEX"], ticker: str
@@ -318,44 +318,33 @@ class KoreaInvestment:
         try:
             endpoint = Endpoints.korea_balance.value
             headers = copy.deepcopy(self.base_headers)
-            headers["tr_id"] = TransactionId.korea_balance.value  # 'TTTC8434R'
+            headers["tr_id"] = TransactionId.korea_balance.value  
 
-            # 요청 파라미터 설정
+            
             request_params = KoreaStockBalanceRequest(
-                CANO=self.account_number,  # 8자리 계좌번호
-                ACNT_PRDT_CD=self.base_order_body.ACNT_PRDT_CD,  # 2자리 계좌상품코드
-                AFHR_FLPR_YN="N",  # 시간외단일가여부
-                OFL_YN="",  # 오프라인 여부
-                INQR_DVSN="02",  # 조회구분: 종목별
-                UNPR_DVSN="01",  # 단가구분
-                FUND_STTL_ICLD_YN="N",  # 펀드결제분포함여부
-                FNCG_AMT_AUTO_RDPT_YN="N",  # 융자금액자동상환여부
-                PRCS_DVSN="00",  # 처리구분: 전일매매포함
-                CTX_AREA_FK100="",  # 연속조회검색조건100
-                CTX_AREA_NK100="",  # 연속조회키100
+                CANO=self.account_number,  
+                ACNT_PRDT_CD=self.base_order_body.ACNT_PRDT_CD,  
+                AFHR_FLPR_YN="N",  
+                OFL_YN="",  
+                INQR_DVSN="02",  
+                UNPR_DVSN="01",  
+                FUND_STTL_ICLD_YN="N",  
+                FNCG_AMT_AUTO_RDPT_YN="N",  
+                PRCS_DVSN="00",  
+                CTX_AREA_FK100="",  
+                CTX_AREA_NK100="",  
             ).dict()
 
-            # 디버깅: 잔고 조회 요청 파라미터 출력
-            print("잔고 조회 요청 파라미터:")
-            print(json.dumps(request_params, indent=2, ensure_ascii=False))
-
-            # API 호출 (GET 요청)
             response = self.get(endpoint, params=request_params, headers=headers)
 
-            # 디버깅: 잔고 조회 응답 출력
-            print("잔고 조회 응답:")
-            print(json.dumps(response, indent=2, ensure_ascii=False))
 
             if response["rt_cd"] == "0":
-                print("잔고 조회 성공")
                 return KoreaStockBalanceResponse(**response)
             else:
-                print(f"잔고 조회 실패: {response['msg1']}")
                 return None
 
         except Exception as e:
-            print(f"잔고 조회 중 오류 발생: {str(e)}")
-            return None  # 예외 발생 시 None 반환
+            return None  
         
 
 
@@ -364,33 +353,22 @@ class KoreaInvestment:
         try:
             endpoint = Endpoints.usa_balance.value
             headers = copy.deepcopy(self.base_headers)
-            headers["tr_id"] = TransactionId.usa_balance.value  # 'TTTS3012R'
+            headers["tr_id"] = TransactionId.usa_balance.value  
 
-            # 요청 파라미터 설정
+            
             request_params = UsaStockBalanceRequest(
-                CANO=self.account_number,  # 8자리 계좌번호
-                ACNT_PRDT_CD=self.base_order_body.ACNT_PRDT_CD,  # 2자리 계좌상품코드
-                OVRS_EXCG_CD="NASD",  # 매핑된 해외 거래소 코드
-                TR_CRCY_CD="USD",     # 거래 통화 코드
-                CTX_AREA_FK200="",    # 연속조회 검색조건200
-                CTX_AREA_NK200="",    # 연속조회 키200
+                CANO=self.account_number,  
+                ACNT_PRDT_CD=self.base_order_body.ACNT_PRDT_CD,  
+                OVRS_EXCG_CD="NASD",  
+                TR_CRCY_CD="USD",     
+                CTX_AREA_FK200="",    
+                CTX_AREA_NK200="",    
             ).dict()
 
-            # 디버깅: 해외 잔고 조회 요청 파라미터 출력
-            print("해외 잔고 조회 요청 파라미터:")
-            print(json.dumps(request_params, indent=2, ensure_ascii=False))
-
-            # API 호출 (GET 요청)
             response = self.get(endpoint, params=request_params, headers=headers)
 
-            # 디버깅: 해외 잔고 조회 응답 출력
-            print("해외 잔고 조회 응답:")
-            print(json.dumps(response, indent=2, ensure_ascii=False))
 
             if response.get("rt_cd") == "0":
-                print("해외 잔고 조회 성공")
-
-                # `output1` 리스트에서 모든 필드가 빈 문자열인 항목을 필터링
                 filtered_output1 = [
                     item for item in response.get("output1", [])
                     if any(value not in ("", "0", "0.0000", "0.00000000", "0.000000") for value in item.values())
@@ -399,28 +377,21 @@ class KoreaInvestment:
 
                 try:
                     usa_balance = UsaStockBalanceResponse(**response)
-                    print(f"Parsed USA Balance: {usa_balance}")
                     return usa_balance
                 except ValidationError as ve:
-                    print(f"해외 잔고 조회 중 Pydantic 검증 오류 발생: {ve}")
                     return None
             else:
-                print(f"해외 잔고 조회 실패: {response.get('msg1', '알 수 없는 오류')}")
                 return None
 
         except ValidationError as ve:
-            print(f"해외 잔고 조회 중 유효성 검사 오류 발생: {ve.errors()}")
             return None
         except Exception as e:
-            print(f"해외 잔고 조회 중 오류 발생: {str(e)}")
-            print(traceback.format_exc())
-            return None  # 예외 발생 시 None 반환
+            return None  
       
         
     @validate_arguments
     def fetch_balance_and_price(self, exchange_name: str, fetch_ticker: str):
         try:
-            # KRX 거래소 처리
             if exchange_name == "KRX":
                 balance = self.korea_fetch_balance()
                 if balance is None:
@@ -428,9 +399,8 @@ class KoreaInvestment:
 
                 holding = next((item for item in balance.output1 if item.pdno == fetch_ticker), None)
                 holding_qty = int(holding.hldg_qty) if holding else 0
-                holding_price = float(holding.prpr) if holding else 0.0  # 가격 조회
+                holding_price = float(holding.prpr) if holding else 0.0  
 
-            # 미국 거래소 처리
             elif exchange_name in ["NASDAQ", "NYSE", "AMEX"]:
                 balance = self.usa_fetch_balance()
                 if balance is None:
@@ -438,17 +408,14 @@ class KoreaInvestment:
 
                 holding = next((item for item in balance.output1 if item.ovrs_pdno == fetch_ticker), None)
                 holding_qty = int(holding.ovrs_cblc_qty) if holding else 0
-                holding_price = float(holding.now_pric2) if holding else 0.0  # 가격 조회
+                holding_price = float(holding.now_pric2) if holding else 0.0  
 
-            # 지원하지 않는 거래소 처리
             else:
                 raise ValueError(f"지원하지 않는 거래소: {exchange_name}")
 
-            # 보유 수량과 페어 가격 반환
             return holding_qty, holding_price
 
         except Exception as e:
-            print(f"잔고 조회 중 오류 발생: {str(e)}")
             return 0, 0.0  # 오류 발생 시 기본값 반환
 
 if __name__ == "__main__":

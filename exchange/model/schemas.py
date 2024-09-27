@@ -200,7 +200,7 @@ class OrderRequest(BaseModel):
     profit_price: float | None = None
     order_name: str = "주문"
     kis_number: int | None = 1
-    pair: str | None = None  # PAIR 추가
+    pair: str | None = None  
     pair_id: str | None = None
     hedge: str | None = None
     unified_symbol: str | None = None
