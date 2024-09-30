@@ -171,7 +171,7 @@ def wait_for_pair_sell_completion(
             total_sell_value += initial_holding_qty * holding_price
 
         for attempt in range(10):
-            time.sleep(2)
+            time.sleep(4)
             holding_qty, holding_price = exchange_instance.fetch_balance_and_price(exchange_name, pair)
 
             if holding_qty <= 0:
