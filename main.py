@@ -1,6 +1,5 @@
 from collections import deque
 from fastapi.exception_handlers import request_validation_exception_handler
-from pprint import pprint
 from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.responses import ORJSONResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
@@ -26,14 +25,13 @@ from exchange import get_exchange, log_message, db, settings, get_bot, pocket
 import ipaddress
 import os
 import sys
-from devtools import debug
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime  
+from datetime import datetime
 
-VERSION = "1.1.6"
+VERSION = "1.2.1"
 app = FastAPI(default_response_class=ORJSONResponse)
 
-
+# 글로벌 딕셔너리 및 큐 추가 (페어 진행 상태 및 큐 관리)
 ongoing_pairs = {}
 order_queues = {}
 
@@ -57,10 +55,10 @@ def get_error(e):
 async def startup():
     log_message(f"POABOT 실행 완료! - 버전:{VERSION}")
     
+    # APScheduler 스케줄러 시작
     scheduler = BackgroundScheduler()
-    scheduler.add_job(delete_old_records, 'cron', hour=7, minute=47)  
+    scheduler.add_job(delete_old_records, 'cron', hour=7, minute=47)  # 매일 오전 7시 47분에 실행
     scheduler.start()
-    print("Scheduler started")
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -83,7 +81,6 @@ async def whitelist_middleware(request: Request, call_next):
             and not ipaddress.ip_address(request.client.host).is_private
         ):
             msg = f"{request.client.host}는 안됩니다"
-            print(msg)
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": f"{request.client.host}는 허용되지 않습니다"},
@@ -143,53 +140,115 @@ def log_error(error_message, order_info):
     log_order_error_message(error_message, order_info)
     log_alert_message(order_info, "실패")
 
+def execute_split_order(
+    exchange_instance: KoreaInvestment,
+    exchange_name: str,
+    ticker: str,
+    order_type: str,
+    side: str,
+    total_amount: int,
+    background_tasks: BackgroundTasks,
+    order_info: MarketOrder,
+):
+    if exchange_name == "KRX":
+        delay_time = 0.0
+    elif exchange_name in ["NASDAQ", "NYSE", "AMEX"]:
+        delay_time = 0.0
+    else:
+        try:
+            order_result = exchange_instance.create_order(
+                exchange=exchange_name,
+                ticker=ticker,
+                order_type=order_type,
+                side=side,
+                amount=total_amount,
+            )
+        except Exception as e:
+            raise e
+        return
+
+    first_order_price = order_info.price
+
+    split_amount = total_amount // 10
+    remaining_amount = total_amount % 10
+
+    error_occurred = False
+
+    for i in range(10):
+        order_qty = split_amount + (1 if i < remaining_amount else 0)
+
+        if order_qty <= 0:
+            continue
+
+        try:
+            order_result = exchange_instance.create_order(
+                exchange=exchange_name,
+                ticker=ticker,
+                order_type=order_type,
+                side=side,
+                amount=order_qty,
+                price=first_order_price
+            )
+
+        except Exception as e:
+            raise e
+
+        time.sleep(delay_time)
 
 def wait_for_pair_sell_completion(
     exchange_name: str,
     order_info: MarketOrder,
     kis_number: int,
     exchange_instance: KoreaInvestment,
-    initial_holding_qty: int,  
-    holding_price: float  
+    initial_holding_qty: int,
+    holding_price: float,
+    background_tasks: BackgroundTasks,
 ):
     try:
         pair = order_info.pair
+
         total_sell_amount = 0.0
-        total_sell_value = 0.0  
+        total_sell_value = 0.0
 
         if initial_holding_qty > 0:
-            time.sleep(0.5)
-            sell_result = exchange_instance.create_order(
-                exchange=exchange_name,
-                ticker=pair,
-                order_type="market",
-                side="sell",
-                amount=initial_holding_qty,
+            execute_split_order(
+                exchange_instance,
+                exchange_name,
+                pair,
+                "market",
+                "sell",
+                initial_holding_qty,
+                background_tasks,
+                order_info,
             )
-            
             total_sell_amount += initial_holding_qty
             total_sell_value += initial_holding_qty * holding_price
 
         for attempt in range(10):
             time.sleep(4)
-            holding_qty, holding_price = exchange_instance.fetch_balance_and_price(exchange_name, pair)
+            try:
+                holding_qty, holding_price = exchange_instance.fetch_balance_and_price(exchange_name, pair)
+            except Exception as e:
+                raise e
 
             if holding_qty <= 0:
                 break
 
-            time.sleep(0.5)
-            sell_result = exchange_instance.create_order(
-                exchange=exchange_name,
-                ticker=pair,
-                order_type="market",
-                side="sell",
-                amount=holding_qty,
+            execute_split_order(
+                exchange_instance,
+                exchange_name,
+                pair,
+                "market",
+                "sell",
+                holding_qty,
+                background_tasks,
+                order_info,
             )
             total_sell_amount += holding_qty
             total_sell_value += holding_qty * holding_price
 
         if holding_qty > 0:
-            raise Exception(f"Balance Sell Failed")
+            raise Exception(f"{attempt + 1}회 시도 후 잔고 남음: {holding_qty}")
 
         if total_sell_amount > 0:
             record_data = {
@@ -202,12 +261,11 @@ def wait_for_pair_sell_completion(
                 "trade_type": "sell"
             }
             response = pocket.create("pair_order_history", record_data)
+
         return {"status": "success", "total_sell_amount": total_sell_amount, "total_sell_value": total_sell_value}
 
     except Exception as e:
-        error_msg = get_error(e)
-        log_error("\n".join(error_msg), order_info)
-        return {"status": "error", "error_msg": str(e)}
+        raise e
     finally:
         ongoing_pairs.pop(pair, None)
 
@@ -227,7 +285,7 @@ async def order(order_info: MarketOrder, background_tasks: BackgroundTasks):
 
             if pair in ongoing_pairs:
                 order_queues[pair].append(order_info)
-                return {"status": "queued", "message" : "Added Queues"}
+                return {"status": "queued", "message": f"{pair} 주문이 큐에 추가되었습니다."}
 
             ongoing_pairs[pair] = True
             order_queues[pair].append(order_info)
@@ -239,7 +297,9 @@ async def order(order_info: MarketOrder, background_tasks: BackgroundTasks):
                     if current_order.side == "buy":
                         holding_qty, holding_price = bot.fetch_balance_and_price(exchange_name, pair)
                         if holding_qty > 0:
-                            wait_for_pair_sell_completion(exchange_name, current_order, current_order.kis_number, bot, holding_qty, holding_price)
+                            wait_for_pair_sell_completion(
+                                exchange_name, current_order, current_order.kis_number, bot, holding_qty, holding_price, background_tasks
+                            )
 
                         records = pocket.get_full_list(
                             "pair_order_history",
@@ -250,51 +310,33 @@ async def order(order_info: MarketOrder, background_tasks: BackgroundTasks):
                             }
                         )
 
-
                         if records:
                             last_sell_record = records[0]
                             total_sell_value = last_sell_record.value
-                            adjusted_value = total_sell_value * 0.995  
-                            price = order_info.price  
-                            buy_amount = int(adjusted_value // price)  
 
+                            adjusted_value = total_sell_value * 0.995
+                            price = order_info.price
+                            buy_amount = int(adjusted_value // price)
 
                             if buy_amount > 0:
-                                time.sleep(0.5)
-                                buy_result = bot.create_order(
-                                    bot.order_info.exchange,
-                                    bot.order_info.base,
-                                    "market",
-                                    "buy",
-                                    buy_amount,
+                                execute_split_order(
+                                    bot, exchange_name, current_order.base, "market", "buy", buy_amount, background_tasks, current_order
                                 )
-                                background_tasks.add_task(log, exchange_name, buy_result, current_order)
+                                background_tasks.add_task(log, exchange_name, "매수 완료", current_order)
                             else:
-                                msg = "The calculated purchase quantity is 0"
-                                print(f"DEBUG: {msg}")
+                                msg = "계산된 매수 수량이 0입니다."
                                 background_tasks.add_task(log_error, msg, current_order)
                         else:
-
-                            time.sleep(0.5)
-                            buy_result = bot.create_order(
-                                bot.order_info.exchange,
-                                bot.order_info.base,
-                                "market",
-                                "buy",
-                                int(current_order.amount),  
+                            execute_split_order(
+                                bot, exchange_name, current_order.base, "market", "buy", int(current_order.amount), background_tasks, current_order
                             )
-                            background_tasks.add_task(log, exchange_name, buy_result, current_order)
+                            background_tasks.add_task(log, exchange_name, "매수 완료", current_order)
 
                     elif current_order.side == "sell":
                         holding_qty, holding_price = bot.fetch_balance_and_price(exchange_name, current_order.base)
                         if holding_qty > 0:
-                            time.sleep(0.5)
-                            sell_result = bot.create_order(
-                                bot.order_info.exchange,
-                                bot.order_info.base,
-                                "market",
-                                "sell",
-                                holding_qty,
+                            execute_split_order(
+                                bot, exchange_name, current_order.base, "market", "sell", holding_qty, background_tasks, current_order
                             )
                             sell_amount = holding_qty
                             sell_value = sell_amount * holding_price
@@ -308,15 +350,15 @@ async def order(order_info: MarketOrder, background_tasks: BackgroundTasks):
                                 "trade_type": "sell"
                             }
                             pocket.create("pair_order_history", record_data)
-                            background_tasks.add_task(log, exchange_name, sell_result, current_order)
+                            background_tasks.add_task(log, exchange_name, "매도 완료", current_order)
                         else:
                             msg = "잔고가 존재하지 않습니다"
-                            print(f"DEBUG: {msg}")
                             background_tasks.add_task(log_error, msg, current_order)
 
             except Exception as e:
                 error_msg = get_error(e)
                 background_tasks.add_task(log_error, "\n".join(error_msg), order_info)
+                return {"status": "error", "message": "주문 처리 중 오류가 발생했습니다.", "error": str(e)}
             finally:
                 ongoing_pairs.pop(pair, None)
                 if not order_queues[pair]:
@@ -324,22 +366,16 @@ async def order(order_info: MarketOrder, background_tasks: BackgroundTasks):
             return {"status": "success", "message": "주문 처리 완료"}
 
         else:
-            order_result = bot.create_order(
-                bot.order_info.exchange,
-                bot.order_info.base,
-                order_info.type.lower(),
-                order_info.side.lower(),
-                int(order_info.amount),
+            execute_split_order(
+                bot, exchange_name, order_info.base, order_info.type.lower(), order_info.side.lower(), int(order_info.amount), background_tasks, order_info
             )
-            background_tasks.add_task(log, exchange_name, order_result, order_info)
+            background_tasks.add_task(log, exchange_name, "주문 완료", order_info)
+            return {"status": "success", "message": "주문 처리 완료"}
 
     except Exception as e:
         error_msg = get_error(e)
-        print(f"DEBUG: 주문 처리 중 예외 발생 - {error_msg}")
         background_tasks.add_task(log_error, "\n".join(error_msg), order_info)
-
-    return {"status": "success", "message": "주문 처리 완료"}
-
+        return {"status": "error", "message": "주문 처리 중 오류가 발생했습니다.", "error": str(e)}
 
 def get_hedge_records(base):
     records = pocket.get_full_list("kimp", query_params={"filter": f'base = "{base}"'})
@@ -475,7 +511,6 @@ async def hedge(hedge_data: HedgeData, background_tasks: BackgroundTasks):
                     upbit_records_id.append(record.id)
 
             if binance_amount > 0 and upbit_amount > 0:
-                # 바이낸스
                 order_info = OrderRequest(
                     exchange="BINANCE",
                     base=base,
@@ -486,7 +521,6 @@ async def hedge(hedge_data: HedgeData, background_tasks: BackgroundTasks):
                 binance_order_result = bot.market_close(order_info)
                 for binance_record_id in binance_records_id:
                     pocket.delete("kimp", binance_record_id)
-                # 업비트
                 order_info = OrderRequest(
                     exchange="UPBIT",
                     base=base,
