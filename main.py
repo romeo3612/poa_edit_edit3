@@ -314,7 +314,7 @@ async def order(order_info: MarketOrder, background_tasks: BackgroundTasks):
                             last_sell_record = records[0]
                             total_sell_value = last_sell_record.value
 
-                            adjusted_value = total_sell_value * 0.995
+                            adjusted_value = total_sell_value * 0.9985
                             price = order_info.price
                             buy_amount = int(adjusted_value // price)
 
