@@ -151,9 +151,9 @@ def execute_split_order(
     order_info: MarketOrder,
 ):
     if exchange_name == "KRX":
-        delay_time = 0.0
+        delay_time = 1.0
     elif exchange_name in ["NASDAQ", "NYSE", "AMEX"]:
-        delay_time = 0.0
+        delay_time = 1.0
     else:
         try:
             order_result = exchange_instance.create_order(
